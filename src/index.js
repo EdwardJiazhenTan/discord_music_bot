@@ -4,6 +4,23 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+// Check for FFmpeg availability
+const { exec } = require('child_process');
+
+function checkFFmpeg() {
+    return new Promise((resolve) => {
+        exec('ffmpeg -version', (error, stdout, stderr) => {
+            if (error) {
+                console.log('⚠️ FFmpeg not found in PATH, using ffmpeg-static');
+                resolve(false);
+            } else {
+                console.log('✅ FFmpeg found in system PATH');
+                resolve(true);
+            }
+        });
+    });
+}
+
 // Create Discord client with necessary intents
 const client = new Client({
     intents: [
@@ -59,9 +76,12 @@ server.listen(PORT, () => {
 });
 
 // Bot ready event
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`🎵 ${client.user.tag} is online and ready to play music!`);
     console.log(`📊 Serving ${client.guilds.cache.size} servers`);
+    
+    // Check FFmpeg availability
+    await checkFFmpeg();
     
     // Set bot presence
     client.user.setPresence({

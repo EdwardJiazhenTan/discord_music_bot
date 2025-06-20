@@ -91,6 +91,7 @@ class MusicPlayer {
             const currentSong = queueManager.getCurrentSong(guildId);
             if (currentSong) {
                 console.log(`▶️ Now playing: ${currentSong.title}`);
+                console.log(`🎵 Player state: Playing`);
             }
         });
 
@@ -103,22 +104,42 @@ class MusicPlayer {
 
         player.on(AudioPlayerStatus.Idle, () => {
             const queue = queueManager.getQueue(guildId);
+            const wasPlaying = queue.isPlaying;
             queue.isPlaying = false;
             queue.isPaused = false;
             
-            console.log(`⏹️ Playback finished in guild ${guildId}`);
+            console.log(`⏹️ Playback finished in guild ${guildId} (was playing: ${wasPlaying})`);
             
-            // Auto-play next song
-            setTimeout(() => {
-                this.playNext(guildId);
-            }, 1000);
+            // Only auto-play next if we were actually playing
+            if (wasPlaying) {
+                console.log(`🔄 Auto-playing next song...`);
+                setTimeout(() => {
+                    this.playNext(guildId);
+                }, 1000);
+            } else {
+                console.log(`⚠️ Player went idle without playing - possible stream issue`);
+                // Try to play the same song again or skip
+                setTimeout(() => {
+                    const currentSong = queueManager.getCurrentSong(guildId);
+                    if (currentSong) {
+                        console.log(`🔄 Retrying current song: ${currentSong.title}`);
+                        this.playSong(guildId);
+                    }
+                }, 2000);
+            }
         });
 
         player.on('error', error => {
-            console.error('Audio player error:', error);
+            console.error('❌ Audio player error:', error);
+            console.error('Error details:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack?.split('\n')[0]
+            });
             
             // Try to play next song on error
             setTimeout(() => {
+                console.log(`🔄 Attempting to recover from player error...`);
                 this.playNext(guildId);
             }, 2000);
         });
@@ -138,42 +159,117 @@ class MusicPlayer {
             }
 
             console.log(`🎵 Playing: ${currentSong.title}`);
+            console.log(`🔗 URL: ${currentSong.url}`);
 
-            // Create audio resource
-            const stream = youtubeSearch.getAudioStream(currentSong.url);
-            const resource = createAudioResource(stream, {
-                metadata: {
-                    title: currentSong.title,
-                    url: currentSong.url
+            // Create audio resource with better error handling
+            try {
+                const stream = youtubeSearch.getAudioStream(currentSong.url);
+                
+                // Add stream error handling
+                stream.on('error', (error) => {
+                    console.error('❌ Audio stream error:', error);
+                    // Try to play next song on stream error
+                    setTimeout(() => {
+                        this.playNext(guildId);
+                    }, 1000);
+                });
+
+                stream.on('info', (info) => {
+                    console.log(`📺 Video info: ${info.videoDetails.title}`);
+                    console.log(`🎵 Available formats: ${info.formats.length}`);
+                });
+
+                const resource = createAudioResource(stream, {
+                    metadata: {
+                        title: currentSong.title,
+                        url: currentSong.url
+                    },
+                    inputType: 'arbitrary', // Let Discord.js detect the format
+                    inlineVolume: true
+                });
+
+                // Add resource error handling
+                resource.playStream.on('error', (error) => {
+                    console.error('❌ Audio resource error:', error);
+                });
+
+                console.log(`🎛️ Created audio resource:`, {
+                    title: resource.metadata.title,
+                    playStreamType: resource.playStream.constructor.name,
+                    hasVolume: !!resource.volume
+                });
+
+                // Get or create player
+                const player = this.createPlayer(guildId);
+                
+                // Get connection
+                const connection = this.connections.get(guildId) || queue.connection;
+                
+                if (!connection) {
+                    console.error(`❌ No voice connection for guild ${guildId}`);
+                    return false;
                 }
-            });
 
-            // Get or create player
-            const player = this.createPlayer(guildId);
-            
-            // Get connection
-            const connection = this.connections.get(guildId) || queue.connection;
-            
-            if (!connection) {
-                console.error(`❌ No voice connection for guild ${guildId}`);
+                console.log(`🔊 Connection state: ${connection.state.status}`);
+
+                // Subscribe connection to player
+                connection.subscribe(player);
+                
+                // Play the resource
+                console.log(`▶️ Starting playback...`);
+                player.play(resource);
+
+                // Update queue
+                queue.player = player;
+                queue.isPlaying = true;
+                queue.isPaused = false;
+
+                console.log(`✅ Playback started for: ${currentSong.title}`);
+                return true;
+
+            } catch (streamError) {
+                console.error('❌ Error creating audio stream:', streamError);
+                
+                // Try alternative stream options
+                console.log('🔄 Trying alternative stream configuration...');
+                
+                try {
+                    const alternativeStream = youtubeSearch.getAudioStream(currentSong.url, {
+                        filter: 'audioonly',
+                        quality: 'lowestaudio', // Try lower quality first
+                        highWaterMark: 1 << 20 // Smaller buffer
+                    });
+
+                    const resource = createAudioResource(alternativeStream, {
+                        metadata: {
+                            title: currentSong.title,
+                            url: currentSong.url
+                        }
+                    });
+
+                    const player = this.createPlayer(guildId);
+                    const connection = this.connections.get(guildId) || queue.connection;
+                    
+                    if (connection) {
+                        connection.subscribe(player);
+                        player.play(resource);
+                        
+                        queue.player = player;
+                        queue.isPlaying = true;
+                        queue.isPaused = false;
+                        
+                        console.log(`✅ Alternative playback started for: ${currentSong.title}`);
+                        return true;
+                    }
+                } catch (altError) {
+                    console.error('❌ Alternative stream also failed:', altError);
+                }
+                
                 return false;
             }
 
-            // Subscribe connection to player
-            connection.subscribe(player);
-            
-            // Play the resource
-            player.play(resource);
-
-            // Update queue
-            queue.player = player;
-            queue.isPlaying = true;
-            queue.isPaused = false;
-
-            return true;
-
         } catch (error) {
-            console.error('Error playing song:', error);
+            console.error('❌ Error in playSong:', error);
             return false;
         }
     }

@@ -167,10 +167,42 @@ class YouTubeSearch {
         const defaultOptions = {
             filter: 'audioonly',
             quality: 'highestaudio',
-            highWaterMark: 1 << 25 // 32MB buffer
+            highWaterMark: 1 << 25, // 32MB buffer
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            }
         };
 
-        return ytdl(url, { ...defaultOptions, ...options });
+        const streamOptions = { ...defaultOptions, ...options };
+        
+        console.log(`🎵 Creating audio stream with options:`, {
+            filter: streamOptions.filter,
+            quality: streamOptions.quality,
+            bufferSize: streamOptions.highWaterMark
+        });
+
+        try {
+            const stream = ytdl(url, streamOptions);
+            
+            // Add stream monitoring
+            stream.on('progress', (chunkLength, downloaded, total) => {
+                const percent = downloaded / total * 100;
+                if (percent % 25 < 1) { // Log every 25%
+                    console.log(`📥 Download progress: ${percent.toFixed(1)}%`);
+                }
+            });
+
+            stream.on('response', (response) => {
+                console.log(`📡 Stream response: ${response.statusCode} ${response.statusMessage}`);
+            });
+
+            return stream;
+        } catch (error) {
+            console.error('❌ Error creating ytdl stream:', error);
+            throw error;
+        }
     }
 
     // Format duration from milliseconds to MM:SS or HH:MM:SS
