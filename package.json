@@ -1,0 +1,49 @@
+{
+  "name": "discord-music-bot",
+  "version": "1.0.0",
+  "description": "A lightweight Discord music bot with YouTube and Spotify integration",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "deploy-commands": "node src/deploy-commands.js",
+    "postinstall": "npm run deploy-commands",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "music",
+    "youtube",
+    "spotify"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "@discordjs/voice": "^0.16.1",
+    "@discordjs/rest": "^2.2.0",
+    "ytdl-core": "^4.11.5",
+    "youtube-sr": "^4.3.11",
+    "spotify-web-api-node": "^5.0.2",
+    "dotenv": "^16.3.1",
+    "ffmpeg-static": "^5.2.0",
+    "sodium": "^3.0.2",
+    "libsodium-wrappers": "^0.7.11",
+    "prism-media": "^1.3.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/discord-music-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/discord-music-bot/issues"
+  },
+  "homepage": "https://github.com/yourusername/discord-music-bot#readme"
+} 
