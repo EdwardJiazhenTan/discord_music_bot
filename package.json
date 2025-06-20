@@ -23,6 +23,8 @@
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.1",
     "@discordjs/rest": "^2.2.0",
+    "@discordjs/opus": "^0.9.0",
+    "opusscript": "^0.0.8",
     "ytdl-core": "^4.11.5",
     "youtube-sr": "^4.3.11",
     "spotify-web-api-node": "^5.0.2",

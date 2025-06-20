@@ -163,34 +163,16 @@ class MusicPlayer {
 
             // Create audio resource with better error handling
             try {
-                const stream = youtubeSearch.getAudioStream(currentSong.url);
+                console.log(`🎵 Attempting to create audio stream...`);
+                const stream = await youtubeSearch.getAudioStreamWithRetry(currentSong.url);
                 
-                // Add stream error handling
-                stream.on('error', (error) => {
-                    console.error('❌ Audio stream error:', error);
-                    // Try to play next song on stream error
-                    setTimeout(() => {
-                        this.playNext(guildId);
-                    }, 1000);
-                });
-
-                stream.on('info', (info) => {
-                    console.log(`📺 Video info: ${info.videoDetails.title}`);
-                    console.log(`🎵 Available formats: ${info.formats.length}`);
-                });
-
                 const resource = createAudioResource(stream, {
                     metadata: {
                         title: currentSong.title,
                         url: currentSong.url
                     },
-                    inputType: 'arbitrary', // Let Discord.js detect the format
+                    inputType: 'arbitrary',
                     inlineVolume: true
-                });
-
-                // Add resource error handling
-                resource.playStream.on('error', (error) => {
-                    console.error('❌ Audio resource error:', error);
                 });
 
                 console.log(`🎛️ Created audio resource:`, {
@@ -230,14 +212,37 @@ class MusicPlayer {
             } catch (streamError) {
                 console.error('❌ Error creating audio stream:', streamError);
                 
-                // Try alternative stream options
+                // Check if it's an Opus error
+                if (streamError.message.includes('opus') || streamError.message.includes('Opus')) {
+                    console.error('❌ OPUS ENCODER ERROR: Audio encoding failed');
+                    console.error('💡 This usually means Opus encoder is not installed properly');
+                    
+                    // Send error message to Discord
+                    const queue = queueManager.getQueue(guildId);
+                    if (queue.textChannel) {
+                        const embed = new EmbedBuilder()
+                            .setColor('#FF6B6B')
+                            .setTitle('❌ Audio Encoding Error')
+                            .setDescription('The bot cannot encode audio. This is a server configuration issue.')
+                            .addFields([
+                                { name: 'Error', value: 'Missing Opus encoder', inline: false },
+                                { name: 'Solution', value: 'Bot admin needs to install audio dependencies', inline: false }
+                            ])
+                            .setTimestamp();
+                        
+                        await queue.textChannel.send({ embeds: [embed] });
+                    }
+                    return false;
+                }
+                
+                // Try alternative stream options for other errors
                 console.log('🔄 Trying alternative stream configuration...');
                 
                 try {
-                    const alternativeStream = youtubeSearch.getAudioStream(currentSong.url, {
+                    const alternativeStream = await youtubeSearch.getAudioStreamWithRetry(currentSong.url, {
                         filter: 'audioonly',
-                        quality: 'lowestaudio', // Try lower quality first
-                        highWaterMark: 1 << 20 // Smaller buffer
+                        quality: 'lowestaudio',
+                        highWaterMark: 1 << 20
                     });
 
                     const resource = createAudioResource(alternativeStream, {

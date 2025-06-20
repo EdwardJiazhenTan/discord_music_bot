@@ -172,7 +172,12 @@ class YouTubeSearch {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 }
-            }
+            },
+            // Add these options to prevent stream expiration
+            begin: 0,
+            liveBuffer: 1000,
+            highWaterMark: 1024 * 512, // 512KB buffer
+            dlChunkSize: 1024 * 1024 // 1MB chunks
         };
 
         const streamOptions = { ...defaultOptions, ...options };
@@ -184,24 +189,49 @@ class YouTubeSearch {
         });
 
         try {
-            const stream = ytdl(url, streamOptions);
-            
-            // Add stream monitoring
-            stream.on('progress', (chunkLength, downloaded, total) => {
-                const percent = downloaded / total * 100;
-                if (percent % 25 < 1) { // Log every 25%
-                    console.log(`📥 Download progress: ${percent.toFixed(1)}%`);
-                }
-            });
-
-            stream.on('response', (response) => {
-                console.log(`📡 Stream response: ${response.statusCode} ${response.statusMessage}`);
-            });
-
-            return stream;
+            // Get fresh video info first to avoid expired URLs
+            return ytdl(url, streamOptions);
         } catch (error) {
             console.error('❌ Error creating ytdl stream:', error);
             throw error;
+        }
+    }
+
+    // Get fresh stream with retry logic
+    async getAudioStreamWithRetry(url, options = {}, retries = 3) {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                console.log(`🔄 Stream attempt ${attempt}/${retries} for: ${url}`);
+                
+                // Get fresh video info to avoid expired URLs
+                const info = await ytdl.getInfo(url);
+                const formats = ytdl.filterFormats(info.formats, 'audioonly');
+                
+                if (formats.length === 0) {
+                    throw new Error('No audio formats available');
+                }
+
+                console.log(`📺 Found ${formats.length} audio formats`);
+                
+                const stream = this.getAudioStream(url, options);
+                
+                // Add error handling to stream
+                stream.on('error', (error) => {
+                    console.error(`❌ Stream error on attempt ${attempt}:`, error.message);
+                });
+
+                return stream;
+                
+            } catch (error) {
+                console.error(`❌ Attempt ${attempt} failed:`, error.message);
+                
+                if (attempt === retries) {
+                    throw error;
+                }
+                
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            }
         }
     }
 
