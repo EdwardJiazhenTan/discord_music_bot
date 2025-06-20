@@ -36,6 +36,28 @@ for (const file of commandFiles) {
 // Initialize music queues for each guild
 client.musicQueues = new Map();
 
+// Simple HTTP server for health checks (required by some cloud platforms)
+const http = require('http');
+const server = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            status: 'Bot is running!',
+            uptime: process.uptime(),
+            guilds: client.guilds.cache.size,
+            timestamp: new Date().toISOString()
+        }));
+    } else {
+        res.writeHead(404);
+        res.end('Not Found');
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🌐 Health check server running on port ${PORT}`);
+});
+
 // Bot ready event
 client.once('ready', () => {
     console.log(`🎵 ${client.user.tag} is online and ready to play music!`);
