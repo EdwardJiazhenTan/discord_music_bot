@@ -18,13 +18,20 @@ module.exports = {
                 .setDescription('Specify search source')
                 .addChoices(
                     { name: 'YouTube', value: 'youtube' },
-                    { name: 'YouTube by Artist', value: 'artist' }
+                    { name: 'YouTube by Artist', value: 'artist' },
+                    { name: 'Spotify', value: 'spotify' }
                 )
                 .setRequired(false)
         ),
 
     async execute(interaction) {
         try {
+            // Check if interaction is still valid
+            if (interaction.replied || interaction.deferred) {
+                console.log('⚠️ Interaction already handled, skipping...');
+                return;
+            }
+
             await interaction.deferReply();
 
             const query = interaction.options.getString('query');
@@ -39,86 +46,135 @@ module.exports = {
                     .setTitle('❌ Error')
                     .setDescription('You need to be in a voice channel to play music!');
                 
-                return await interaction.editReply({ embeds: [embed] });
+                return await this.safeEditReply(interaction, { embeds: [embed] });
             }
 
             // Set text channel for queue updates
             const queue = queueManager.getQueue(guildId);
             queue.textChannel = interaction.channel;
 
-            // Check if it's a Spotify playlist URL
-            if (spotifyApi.isSpotifyPlaylistURL(query)) {
-                return await this.handleSpotifyPlaylist(interaction, query, member);
-            }
-
-            // Check if it's a YouTube URL
-            if (youtubeSearch.isYouTubeURL(query)) {
-                return await this.handleYouTubeURL(interaction, query, member);
-            }
-
-            // Handle search by source
-            if (source === 'artist') {
-                return await this.handleArtistSearch(interaction, query, member);
-            } else {
-                return await this.handleYouTubeSearch(interaction, query, member);
+            if (source === 'youtube') {
+                if (youtubeSearch.isYouTubeURL(query)) {
+                    await this.handleYouTubeURL(interaction, query, member);
+                } else {
+                    await this.handleYouTubeSearch(interaction, query, member);
+                }
+            } else if (source === 'spotify') {
+                await this.handleSpotifyURL(interaction, query, member);
+            } else if (source === 'artist') {
+                await this.handleArtistSearch(interaction, query, member);
             }
 
         } catch (error) {
-            console.error('Error in play command:', error);
+            console.error('❌ Error in play command:', error);
             
             const embed = new EmbedBuilder()
                 .setColor('#FF6B6B')
-                .setTitle('❌ Error')
-                .setDescription('An error occurred while processing your request. Please try again.');
-            
+                .setTitle('❌ Unexpected Error')
+                .setDescription('Something went wrong while processing your request.')
+                .addFields({ 
+                    name: '🔧 What you can try', 
+                    value: '• Try the command again\n• Check if the URL is valid\n• Contact support if the issue persists' 
+                });
+
+            await this.safeEditReply(interaction, { embeds: [embed] });
+        }
+    },
+
+    // Safe method to edit reply without causing errors
+    async safeEditReply(interaction, content) {
+        try {
             if (interaction.deferred) {
-                await interaction.editReply({ embeds: [embed] });
-            } else {
-                await interaction.reply({ embeds: [embed] });
+                return await interaction.editReply(content);
+            } else if (!interaction.replied) {
+                return await interaction.reply(content);
             }
+        } catch (error) {
+            console.error('❌ Failed to respond to interaction:', error.message);
         }
     },
 
+    // Handle YouTube URL
     async handleYouTubeURL(interaction, url, member) {
-        const guildId = interaction.guild.id;
-        
-        const result = await youtubeSearch.getVideoInfo(url);
-        
-        if (!result.success) {
+        try {
+            const result = await youtubeSearch.getVideoInfo(url);
+            
+            if (!result.success) {
+                const embed = new EmbedBuilder()
+                    .setColor('#FF6B6B')
+                    .setTitle('❌ YouTube Error')
+                    .setDescription(`Failed to get video information: ${result.error}`)
+                    .addFields({ 
+                        name: '💡 Troubleshooting', 
+                        value: '• Make sure the video is not private or region-locked\n• Try copying the URL again\n• Some videos may be temporarily unavailable' 
+                    });
+                
+                return await this.safeEditReply(interaction, { embeds: [embed] });
+            }
+
+            const song = {
+                title: result.video.title,
+                url: url,
+                duration: result.video.duration,
+                thumbnail: result.video.thumbnail,
+                requestedBy: member.user.tag
+            };
+
+            return await this.addToQueueAndPlay(interaction, song, member);
+
+        } catch (error) {
+            console.error('❌ Error handling YouTube URL:', error);
+            
             const embed = new EmbedBuilder()
                 .setColor('#FF6B6B')
-                .setTitle('❌ Error')
-                .setDescription(`Failed to get video info: ${result.error}`);
+                .setTitle('❌ YouTube Processing Error')
+                .setDescription('Could not process the YouTube video')
+                .addFields({ 
+                    name: '🔧 Common solutions', 
+                    value: '• Video might be private or age-restricted\n• YouTube might be temporarily unavailable\n• Try a different video' 
+                });
             
-            return await interaction.editReply({ embeds: [embed] });
+            await this.safeEditReply(interaction, { embeds: [embed] });
         }
-
-        const song = {
-            ...result.song,
-            requestedBy: member.displayName
-        };
-
-        return await this.addSongAndPlay(interaction, song, member);
     },
 
+    // Handle YouTube search by query
     async handleYouTubeSearch(interaction, query, member) {
-        const result = await youtubeSearch.searchByQuery(query, 1);
-        
-        if (!result.success || result.songs.length === 0) {
+        try {
+            const result = await youtubeSearch.searchByQuery(query, 1);
+            
+            if (!result.success || !result.songs || result.songs.length === 0) {
+                const embed = new EmbedBuilder()
+                    .setColor('#FFA500')
+                    .setTitle('🔍 No Results Found')
+                    .setDescription(`Could not find any videos for: **${query}**`)
+                    .addFields({ 
+                        name: '💡 Try these tips', 
+                        value: '• Use more specific search terms\n• Include the artist name\n• Try different keywords\n• Check spelling' 
+                    });
+                
+                return await this.safeEditReply(interaction, { embeds: [embed] });
+            }
+
+            const song = result.songs[0];
+            song.requestedBy = member.user.tag;
+
+            return await this.addToQueueAndPlay(interaction, song, member);
+
+        } catch (error) {
+            console.error('❌ Error in YouTube search:', error);
+            
             const embed = new EmbedBuilder()
                 .setColor('#FF6B6B')
-                .setTitle('❌ No Results')
-                .setDescription(`No results found for: "${query}"`);
+                .setTitle('❌ Search Error')
+                .setDescription('Could not search YouTube at this time')
+                .addFields({ 
+                    name: '🔧 What to try', 
+                    value: '• Try again in a moment\n• Use a direct YouTube URL instead\n• Check your search terms' 
+                });
             
-            return await interaction.editReply({ embeds: [embed] });
+            await this.safeEditReply(interaction, { embeds: [embed] });
         }
-
-        const song = {
-            ...result.songs[0],
-            requestedBy: member.displayName
-        };
-
-        return await this.addSongAndPlay(interaction, song, member);
     },
 
     async handleArtistSearch(interaction, artistName, member) {
@@ -176,6 +232,96 @@ module.exports = {
         }
 
         return await interaction.editReply({ embeds: [embed] });
+    },
+
+    // Helper method to add song to queue and start playing
+    async addToQueueAndPlay(interaction, song, member) {
+        try {
+            const queuePosition = queueManager.addSong(interaction.guild.id, song);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00D166')
+                .setTitle('✅ Added to Queue')
+                .setDescription(`**${song.title}**`)
+                .addFields(
+                    { name: '⏱️ Duration', value: song.duration || 'Unknown', inline: true },
+                    { name: '📍 Position', value: `${queuePosition}`, inline: true },
+                    { name: '👤 Requested by', value: song.requestedBy, inline: true }
+                )
+                .setThumbnail(song.thumbnail);
+
+            await this.safeEditReply(interaction, { embeds: [embed] });
+
+            // Try to join voice channel and play
+            const connection = await musicPlayer.joinChannel(member.voice.channel);
+            if (connection && queuePosition === 1) {
+                try {
+                    await musicPlayer.playSong(interaction.guild.id);
+                } catch (playError) {
+                    console.error('❌ Error starting playback:', playError);
+                    
+                    const errorEmbed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('❌ Playback Error')
+                        .setDescription('Added to queue but failed to start playing.')
+                        .addFields({ 
+                            name: '🔄 Try these solutions', 
+                            value: '• Use `/controls skip` to try the next song\n• Wait a moment and try again\n• Check your internet connection' 
+                        });
+                    
+                    await interaction.followUp({ embeds: [errorEmbed] });
+                }
+            }
+
+        } catch (error) {
+            console.error('❌ Error adding to queue:', error);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#FF6B6B')
+                .setTitle('❌ Queue Error')
+                .setDescription('Failed to add song to queue')
+                .addFields({ 
+                    name: '🔧 What happened', 
+                    value: '• Queue system encountered an error\n• Try the command again\n• Contact support if this persists' 
+                });
+            
+            await this.safeEditReply(interaction, { embeds: [embed] });
+        }
+    },
+
+    async handleSpotifyURL(interaction, url, member) {
+        try {
+            // Check if it's a Spotify playlist URL
+            if (spotifyApi.isSpotifyPlaylistURL(url)) {
+                return await this.handleSpotifyPlaylist(interaction, url, member);
+            }
+            
+            // Handle other Spotify URLs (tracks, albums, etc.)
+            const embed = new EmbedBuilder()
+                .setColor('#1DB954')
+                .setTitle('🎵 Spotify Integration')
+                .setDescription('Spotify track/album links are not yet supported. Try a playlist URL or search for the song on YouTube.')
+                .addFields({ 
+                    name: '💡 What you can do', 
+                    value: '• Copy the song title and use `/play` to search YouTube\n• Use a Spotify playlist URL\n• Use direct YouTube URLs' 
+                });
+            
+            await this.safeEditReply(interaction, { embeds: [embed] });
+
+        } catch (error) {
+            console.error('❌ Error handling Spotify URL:', error);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#FF6B6B')
+                .setTitle('❌ Spotify Error')
+                .setDescription('Could not process the Spotify URL')
+                .addFields({ 
+                    name: '🔧 Common issues', 
+                    value: '• URL might be invalid\n• Playlist might be private\n• Try copying the URL again' 
+                });
+            
+            await this.safeEditReply(interaction, { embeds: [embed] });
+        }
     },
 
     async handleSpotifyPlaylist(interaction, url, member) {
@@ -251,33 +397,6 @@ module.exports = {
         } else if (playlist.failedTracks.length > 5) {
             embed.addFields([
                 { name: '⚠️ Tracks Not Found', value: `${playlist.failedTracks.length} tracks could not be found on YouTube`, inline: false }
-            ]);
-        }
-
-        return await interaction.editReply({ embeds: [embed] });
-    },
-
-    async addSongAndPlay(interaction, song, member) {
-        const guildId = interaction.guild.id;
-        
-        // Add song to queue
-        const queuePosition = queueManager.addSong(guildId, song);
-        
-        // Join voice channel and start playing if queue was empty
-        const wasEmpty = queuePosition === 1;
-        
-        if (wasEmpty) {
-            await musicPlayer.joinChannel(member.voice.channel);
-            await musicPlayer.playSong(guildId);
-        }
-
-        // Create response embed
-        const embed = musicPlayer.createNowPlayingEmbed(song, wasEmpty ? null : queuePosition - 1);
-        
-        if (!wasEmpty) {
-            embed.setTitle('🎵 Added to Queue');
-            embed.addFields([
-                { name: '📍 Position in Queue', value: `${queuePosition}`, inline: true }
             ]);
         }
 

@@ -141,3 +141,4 @@ docker-compose.yml
 # Backup files
 *.backup
 *.old 
+.aider*

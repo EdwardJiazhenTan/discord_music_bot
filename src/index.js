@@ -53,35 +53,35 @@ for (const file of commandFiles) {
 // Initialize music queues for each guild
 client.musicQueues = new Map();
 
-// Simple HTTP server for health checks (required by some cloud platforms)
-const http = require('http');
-const server = http.createServer((req, res) => {
-    if (req.url === '/' || req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            status: 'Bot is running!',
-            uptime: process.uptime(),
-            guilds: client.guilds.cache.size,
-            timestamp: new Date().toISOString()
-        }));
-    } else {
-        res.writeHead(404);
-        res.end('Not Found');
+// Check dependencies
+async function checkDependencies() {
+    console.log('🔧 Checking dependencies...');
+    
+    // Check FFmpeg availability
+    await checkFFmpeg();
+    
+    // Check for Opus encoder (optional but recommended)
+    try {
+        require('@discordjs/opus');
+        console.log('✅ @discordjs/opus found - voice quality will be optimal');
+    } catch (e) {
+        try {
+            require('opusscript');
+            console.log('⚠️  Using opusscript fallback - voice quality may be reduced');
+        } catch (e2) {
+            console.log('⚠️  No Opus encoder found - using FFmpeg only (may have higher latency)');
+            console.log('   To improve performance, install: npm install @discordjs/opus');
+        }
     }
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🌐 Health check server running on port ${PORT}`);
-});
+}
 
 // Bot ready event
 client.once('ready', async () => {
     console.log(`🎵 ${client.user.tag} is online and ready to play music!`);
     console.log(`📊 Serving ${client.guilds.cache.size} servers`);
     
-    // Check FFmpeg availability
-    await checkFFmpeg();
+    // Check dependencies
+    await checkDependencies();
     
     // Set bot presence
     client.user.setPresence({
