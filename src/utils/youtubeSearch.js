@@ -198,39 +198,128 @@ class YouTubeSearch {
     }
 
     // Get fresh stream with retry logic
-    async getAudioStreamWithRetry(url, options = {}, retries = 3) {
-        for (let attempt = 1; attempt <= retries; attempt++) {
+    async getAudioStreamWithRetry(url, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`🔄 Stream attempt ${attempt}/${retries} for: ${url}`);
+                console.log(`🔄 Stream attempt ${attempt}/${maxRetries} for: ${url}`);
                 
-                // Get fresh video info to avoid expired URLs
-                const info = await ytdl.getInfo(url);
-                const formats = ytdl.filterFormats(info.formats, 'audioonly');
+                // Try different approaches based on attempt number
+                let options = {};
                 
-                if (formats.length === 0) {
-                    throw new Error('No audio formats available');
+                switch (attempt) {
+                    case 1:
+                        // Standard approach
+                        options = {
+                            filter: 'audioonly',
+                            quality: 'highestaudio',
+                            requestOptions: {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                }
+                            }
+                        };
+                        break;
+                    case 2:
+                        // Try with different quality
+                        options = {
+                            filter: 'audioonly',
+                            quality: 'lowestaudio',
+                            requestOptions: {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                                }
+                            }
+                        };
+                        break;
+                    case 3:
+                        // Last resort - try any audio format
+                        options = {
+                            filter: 'audio',
+                            requestOptions: {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+                                }
+                            }
+                        };
+                        break;
                 }
-
-                console.log(`📺 Found ${formats.length} audio formats`);
                 
-                const stream = this.getAudioStream(url, options);
+                const stream = ytdl(url, options);
                 
-                // Add error handling to stream
-                stream.on('error', (error) => {
-                    console.error(`❌ Stream error on attempt ${attempt}:`, error.message);
+                // Test the stream by waiting for data event or error
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Stream timeout'));
+                    }, 10000); // 10 second timeout
+                    
+                    stream.once('response', () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    });
+                    
+                    stream.once('error', (error) => {
+                        clearTimeout(timeout);
+                        reject(error);
+                    });
+                    
+                    // Also resolve on first data chunk
+                    stream.once('data', () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    });
                 });
-
+                
+                console.log(`✅ Stream created successfully on attempt ${attempt}`);
                 return stream;
                 
             } catch (error) {
-                console.error(`❌ Attempt ${attempt} failed:`, error.message);
+                console.log(`❌ Attempt ${attempt} failed: ${error.message}`);
                 
-                if (attempt === retries) {
-                    throw error;
+                if (attempt === maxRetries) {
+                    // If all attempts failed, try alternative stream configuration
+                    console.log(`🔄 Trying alternative stream configuration...`);
+                    return await this.getSimpleStream(url);
                 }
                 
-                // Wait before retry
+                // Wait before next attempt
                 await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            }
+        }
+    }
+
+    // Simple stream fallback when ytdl-core fails
+    async getSimpleStream(url, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`🔄 Stream attempt ${attempt}/${maxRetries} for: ${url}`);
+                
+                // Try alternative stream with no specific format requirements
+                console.log('🔄 Trying alternative stream configuration...');
+                const simpleStream = ytdl(url, {
+                    filter: 'audioonly',
+                    highWaterMark: 1 << 25, // Increase buffer size
+                    requestOptions: {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    }
+                });
+                
+                // Test if stream works
+                simpleStream.once('response', () => {
+                    console.log('✅ Simple stream created on attempt 1');
+                });
+                
+                return simpleStream;
+                
+            } catch (error) {
+                console.log(`❌ Simple stream attempt ${attempt} failed: ${error.message}`);
+                
+                if (attempt === maxRetries) {
+                    throw new Error(`Could not create audio stream after ${maxRetries} attempts: ${error.message}`);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
             }
         }
     }

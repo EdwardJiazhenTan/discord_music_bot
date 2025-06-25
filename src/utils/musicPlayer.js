@@ -5,7 +5,8 @@ const {
     AudioPlayerStatus, 
     VoiceConnectionStatus,
     getVoiceConnection,
-    entersState
+    entersState,
+    StreamType
 } = require('@discordjs/voice');
 const { EmbedBuilder } = require('discord.js');
 const youtubeSearch = require('./youtubeSearch');
@@ -161,26 +162,42 @@ class MusicPlayer {
             console.log(`🎵 Playing: ${currentSong.title}`);
             console.log(`🔗 URL: ${currentSong.url}`);
 
-            // Create audio resource with better error handling
+            // Create audio resource from the stream
             try {
-                console.log(`🎵 Attempting to create audio stream...`);
+                console.log('🎵 Creating audio resource...');
                 const stream = await youtubeSearch.getAudioStreamWithRetry(currentSong.url);
                 
-                const resource = createAudioResource(stream, {
-                    metadata: {
-                        title: currentSong.title,
-                        url: currentSong.url
-                    },
-                    inputType: 'arbitrary',
-                    inlineVolume: true
+                // Use FFmpeg to convert to raw PCM and bypass Opus entirely
+                const { spawn } = require('child_process');
+                const ffmpeg = spawn('ffmpeg', [
+                    '-i', 'pipe:0',           // Input from stdin (our stream)
+                    '-f', 's16le',            // Output format: 16-bit little-endian PCM
+                    '-ar', '48000',           // Sample rate: 48kHz (Discord standard)
+                    '-ac', '2',               // Audio channels: stereo
+                    '-',                      // Output to stdout
+                ], {
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
+                
+                // Pipe the YouTube stream to FFmpeg
+                stream.pipe(ffmpeg.stdin);
+                
+                // Handle FFmpeg errors
+                ffmpeg.stderr.on('data', (data) => {
+                    // Only log actual errors, not info messages
+                    const message = data.toString();
+                    if (message.includes('Error') || message.includes('Failed')) {
+                        console.error('FFmpeg error:', message);
+                    }
+                });
+                
+                const resource = createAudioResource(ffmpeg.stdout, {
+                    inputType: StreamType.Raw,
+                    inlineVolume: false
                 });
 
-                console.log(`🎛️ Created audio resource:`, {
-                    title: resource.metadata.title,
-                    playStreamType: resource.playStream.constructor.name,
-                    hasVolume: !!resource.volume
-                });
-
+                this.currentResource = resource;
+                
                 // Get or create player
                 const player = this.createPlayer(guildId);
                 
@@ -198,9 +215,8 @@ class MusicPlayer {
                 connection.subscribe(player);
                 
                 // Play the resource
-                console.log(`▶️ Starting playback...`);
                 player.play(resource);
-
+                
                 // Update queue
                 queue.player = player;
                 queue.isPlaying = true;
