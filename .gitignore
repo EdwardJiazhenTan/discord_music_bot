@@ -142,3 +142,8 @@ docker-compose.yml
 *.backup
 *.old 
 .aider*
+
+# special files
+1750874029933-base.js
+1750874029941-base.js
+
