@@ -165,34 +165,10 @@ class MusicPlayer {
             // Create audio resource from the stream
             try {
                 console.log('🎵 Creating audio resource...');
-                const stream = await youtubeSearch.getAudioStreamWithRetry(currentSong.url);
+                const stream = await youtubeSearch.getAudioStream(currentSong.url);
                 
-                // Use FFmpeg to convert to raw PCM and bypass Opus entirely
-                const { spawn } = require('child_process');
-                const ffmpeg = spawn('ffmpeg', [
-                    '-i', 'pipe:0',           // Input from stdin (our stream)
-                    '-f', 's16le',            // Output format: 16-bit little-endian PCM
-                    '-ar', '48000',           // Sample rate: 48kHz (Discord standard)
-                    '-ac', '2',               // Audio channels: stereo
-                    '-',                      // Output to stdout
-                ], {
-                    stdio: ['pipe', 'pipe', 'pipe']
-                });
-                
-                // Pipe the YouTube stream to FFmpeg
-                stream.pipe(ffmpeg.stdin);
-                
-                // Handle FFmpeg errors
-                ffmpeg.stderr.on('data', (data) => {
-                    // Only log actual errors, not info messages
-                    const message = data.toString();
-                    if (message.includes('Error') || message.includes('Failed')) {
-                        console.error('FFmpeg error:', message);
-                    }
-                });
-                
-                const resource = createAudioResource(ffmpeg.stdout, {
-                    inputType: StreamType.Raw,
+                const resource = createAudioResource(stream, {
+                    inputType: StreamType.Arbitrary,
                     inlineVolume: false
                 });
 
@@ -228,63 +204,25 @@ class MusicPlayer {
             } catch (streamError) {
                 console.error('❌ Error creating audio stream:', streamError);
                 
-                // Check if it's an Opus error
-                if (streamError.message.includes('opus') || streamError.message.includes('Opus')) {
-                    console.error('❌ OPUS ENCODER ERROR: Audio encoding failed');
-                    console.error('💡 This usually means Opus encoder is not installed properly');
+                // Send error message to Discord
+                const queue = queueManager.getQueue(guildId);
+                if (queue.textChannel) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('❌ Playback Error')
+                        .setDescription(`Failed to play: **${currentSong.title}**`)
+                        .addFields([
+                            { name: 'Error', value: streamError.message.substring(0, 1000), inline: false }
+                        ])
+                        .setTimestamp();
                     
-                    // Send error message to Discord
-                    const queue = queueManager.getQueue(guildId);
-                    if (queue.textChannel) {
-                        const embed = new EmbedBuilder()
-                            .setColor('#FF6B6B')
-                            .setTitle('❌ Audio Encoding Error')
-                            .setDescription('The bot cannot encode audio. This is a server configuration issue.')
-                            .addFields([
-                                { name: 'Error', value: 'Missing Opus encoder', inline: false },
-                                { name: 'Solution', value: 'Bot admin needs to install audio dependencies', inline: false }
-                            ])
-                            .setTimestamp();
-                        
-                        await queue.textChannel.send({ embeds: [embed] });
-                    }
-                    return false;
+                    await queue.textChannel.send({ embeds: [embed] });
                 }
                 
-                // Try alternative stream options for other errors
-                console.log('🔄 Trying alternative stream configuration...');
-                
-                try {
-                    const alternativeStream = await youtubeSearch.getAudioStreamWithRetry(currentSong.url, {
-                        filter: 'audioonly',
-                        quality: 'lowestaudio',
-                        highWaterMark: 1 << 20
-                    });
-
-                    const resource = createAudioResource(alternativeStream, {
-                        metadata: {
-                            title: currentSong.title,
-                            url: currentSong.url
-                        }
-                    });
-
-                    const player = this.createPlayer(guildId);
-                    const connection = this.connections.get(guildId) || queue.connection;
-                    
-                    if (connection) {
-                        connection.subscribe(player);
-                        player.play(resource);
-                        
-                        queue.player = player;
-                        queue.isPlaying = true;
-                        queue.isPaused = false;
-                        
-                        console.log(`✅ Alternative playback started for: ${currentSong.title}`);
-                        return true;
-                    }
-                } catch (altError) {
-                    console.error('❌ Alternative stream also failed:', altError);
-                }
+                // Try to play next song
+                setTimeout(() => {
+                    this.playNext(guildId);
+                }, 2000);
                 
                 return false;
             }
