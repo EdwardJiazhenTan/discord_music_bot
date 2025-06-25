@@ -1,5 +1,5 @@
 const YouTube = require('youtube-sr').default;
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
 
 class YouTubeSearch {
     constructor() {
